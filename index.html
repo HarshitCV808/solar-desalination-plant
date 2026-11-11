@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solar desalination plant: 3D model</title>
+<style>
+:root{--ink:#0b3440;--sea:#0e6a85;--fresh:#2aa9e0;--brine:#c2572b;--sun:#f2b705;--crop:#4c9a2a;--side:320px}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;font:15px/1.45 "Avenir Next","Segoe UI",system-ui,sans-serif;color:var(--ink);background:#cfe9f3}
+#stage{position:fixed;inset:0 0 0 var(--side);overflow:hidden}
+canvas{display:block}
+#side{position:fixed;inset:0 auto 0 0;width:var(--side);background:#fff;padding:20px 16px;overflow:auto;border-right:1px solid #b9d3dc}
+h1{font-size:22px;line-height:1.15;margin:0 0 6px}
+h2{font-size:15px;margin:18px 0 6px}
+p{margin:0 0 10px}
+.muted{color:#4a6670;font-size:13px}
+ol{list-style:none;margin:0;padding:0}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible{outline:3px solid var(--sun);outline-offset:1px}
+#parts button{display:flex;gap:8px;align-items:center;width:100%;padding:5px 6px;border:0;border-radius:6px;background:none;text-align:left}
+#parts button:hover{background:#e8f3f7}
+#parts button[aria-current=true]{background:var(--ink);color:#fff}
+.b{flex:none;display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;font-size:12px;font-weight:700;color:#fff}
+.power{background:#a87c00}.sea{background:var(--sea)}.brine{background:var(--brine)}.fresh{background:#1479ad}.crop{background:#3a7a1f}
+#info{background:#e8f3f7;border-radius:8px;padding:12px;margin-top:12px}
+#info h2{margin:0 0 4px;font-size:16px}
+#info p{margin:0}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.row button{padding:6px 10px;border:1px solid #9fbcc7;border-radius:6px;background:#fff}
+.row button:hover{background:#e8f3f7}
+table{border-collapse:collapse;width:100%;font-size:13px}
+td{padding:3px 0;border-top:1px solid #d5e4ea}
+td:last-child{text-align:right;font-weight:600;white-space:nowrap}
+.key span{display:inline-block;width:22px;height:6px;border-radius:3px;margin-right:6px;vertical-align:middle}
+.key li{font-size:13px}
+.tag[hidden]{display:none}
+.tag{position:absolute;transform:translate(-50%,-100%);display:flex;gap:5px;align-items:center;padding:2px 9px 2px 2px;border:0;border-radius:14px;background:#fff;box-shadow:0 1px 4px rgba(11,52,64,.35);font-size:13px;font-weight:600;white-space:nowrap}
+.tag[aria-current=true]{background:var(--ink);color:#fff}
+.tag .b{width:22px;height:22px}
+.nolabels .tag{display:none}
+.compact .tag:not([aria-current=true]){padding:2px}
+.compact .tag:not([aria-current=true]) i{display:none}
+.tag i{font-style:normal}
+.tag::after{content:"";position:absolute;left:50%;top:100%;width:2px;margin-left:-1px;height:var(--lead,0px);background:#fff;pointer-events:none}
+#err{position:absolute;inset:40% 10% auto;text-align:center;font-size:17px}
+.shot #side{display:none}
+.shot .tag{font-size:28px;gap:10px;padding:4px 18px 4px 4px;border-radius:30px}
+.shot .tag .b{width:44px;height:44px;font-size:23px}
+.shot .tag::after{width:3px}
+.shot #stage{left:0}
+@media (max-width:760px){
+  #side{inset:auto 0 0 0;width:auto;height:44%;border-right:0;border-top:1px solid #b9d3dc}
+  #stage{inset:0 0 44% 0}
+  .tag{font-size:11px}
+}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<aside id="side">
+  <h1>Solar desalination plant</h1>
+  <p class="muted">Salt water in, drinking water and irrigation water out, about 20 litres a day. Drag to rotate, scroll to zoom, click a part.</p>
+  <ol id="parts"></ol>
+  <div class="row">
+    <button id="prev">Back</button><button id="next">Next part</button>
+  </div>
+  <div id="info" aria-live="polite"></div>
+  <div class="row">
+    <button id="labels">Hide labels</button><button id="pause">Pause flow</button><button id="reset">Whole plant</button>
+  </div>
+  <h2>Flow colours</h2>
+  <ol class="key">
+    <li><span style="background:var(--sea)"></span>Salt water</li>
+    <li><span style="background:var(--fresh)"></span>Fresh water</li>
+    <li><span style="background:var(--brine)"></span>Brine (extra-salty reject)</li>
+    <li><span style="background:var(--sun)"></span>Electricity</li>
+  </ol>
+  <h2>One day of running</h2>
+  <table id="balance"></table>
+  <p class="muted" style="margin-top:8px">Design estimates, calculated from the assumptions in the README. Not measured on a real unit.</p>
+</aside>
+<main id="stage"><div id="err" hidden>The 3D view could not load. It needs an internet connection the first time, to fetch the three.js library.</div></main>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---- Design basis (all estimates; sources in README.md) ----
+const D = {
+  product: 20,        // L/day fresh water wanted
+  drink: 12,          // L/day to the drinking tap (4 people x 3 L)
+  recovery: 0.10,     // share of sea water that becomes fresh; small units run low
+  seaTDS: 35000,      // mg/L salt in sea water
+  rejection: 0.99,    // share of salt the membrane holds back (design requirement)
+  whPerL: 8.5,        // pump energy per litre of fresh water (small 12 V unit)
+  panelW: 100, sunHours: 5, sysEff: 0.7,
+};
+const feed = D.product / D.recovery, brine = feed - D.product;
+const freshTDS = D.seaTDS * (1 - D.rejection);
+const brineTDS = (feed * D.seaTDS - D.product * freshTDS) / brine;
+const used = D.product * D.whPerL, made = D.panelW * D.sunHours * D.sysEff;
+// Self-check: water and salt must balance, energy must cover demand, water must meet both limits.
+console.assert(Math.abs(feed - D.product - brine) < 1e-9, 'water balance');
+console.assert(Math.abs(feed * D.seaTDS - D.product * freshTDS - brine * brineTDS) < 1e-6, 'salt balance');
+console.assert(made > used, 'solar energy covers the pump');
+console.assert(freshTDS < 450, 'fresh water under FAO 450 mg/L and WHO 600 mg/L');
+
+const $ = s => document.querySelector(s);
+const r0 = n => Math.round(n).toLocaleString('en');
+$('#balance').innerHTML = [
+  ['Salt water pumped in', r0(feed) + ' L'],
+  ['Fresh water made', r0(D.product) + ' L'],
+  ['&nbsp;&nbsp;to drinking tap', r0(D.drink) + ' L'],
+  ['&nbsp;&nbsp;to irrigation', r0(D.product - D.drink) + ' L'],
+  ['Brine collected', r0(brine) + ' L'],
+  ['Salt: feed / fresh / brine', `${r0(D.seaTDS/1000)} / ${(freshTDS/1000).toFixed(2)} / ${r0(brineTDS/1000)} g/L`],
+  ['Pump energy / solar supply', `${r0(used)} / ${r0(made)} Wh`],
+].map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+
+// ---- Parts, in process order. at = label anchor in the scene. ----
+const PARTS = [
+  {n:'A', c:'power', name:'Solar panels', at:[-2,2.3,-5.5],
+   text:`About ${D.panelW} W of photovoltaic panels turn sunlight into electricity. On a sunny day they give roughly ${r0(made)} Wh, about twice what the plant uses.`},
+  {n:'B', c:'power', name:'Battery and charge controller', at:[1.5,1.3,-5.2],
+   text:'A 12 V battery stores the solar energy so the pump runs steadily when a cloud passes. The controller stops the battery over-charging.'},
+  {n:'1', c:'sea', name:'Salt-water beaker', at:[-8.5,2.7,-2],
+   text:`A beaker of salty water stands in for the sea: ${r0(D.seaTDS/1000)} g of salt per litre, the same as sea water. A strainer on the suction pipe keeps grit out. Making ${r0(D.product)} L of fresh water takes about ${r0(feed)} L of salt water.`},
+  {n:'2', c:'sea', name:'Pre-filters', at:[-4.9,2,-2],
+   text:'Two cartridge filters, coarse then fine, remove sand and silt. Without them the grit would clog and scratch the membrane.'},
+  {n:'3', c:'sea', name:'High-pressure pump', at:[-1.5,1.2,-2],
+   text:'The solar-powered pump squeezes the sea water to about 55 bar. That is above the 27 bar osmotic pressure of sea water, which is what makes reverse osmosis possible.'},
+  {n:'4', c:'fresh', name:'Reverse-osmosis membrane', at:[3,1.8,-2],
+   text:`Water molecules are pushed through the membrane; at least 99% of the salt cannot follow. About 1 litre in 10 comes out fresh (${r0(freshTDS)} mg/L salt). The rest leaves as brine.`},
+  {n:'5', c:'brine', name:'Brine container', at:[4.5,2.6,4.5],
+   text:`The salty reject collects here, about 9 litres for every litre of fresh water (${r0(brineTDS/1000)} g/L, around ${r0((brineTDS/D.seaTDS-1)*100)}% saltier than the feed). It is kept apart from the beaker so the feed does not get saltier. A real coastal plant returns it to the sea, away from the intake.`},
+  {n:'6', c:'fresh', name:'Mineral filter', at:[7,2.3,-2],
+   text:'Membrane water has almost no minerals and is slightly acidic. A bed of calcite and magnesium granules adds calcium and magnesium back, which both people and crops need.'},
+  {n:'7', c:'fresh', name:'UV disinfection', at:[10,1.5,-3.6],
+   text:'Drinking line only. An ultraviolet lamp kills any germs before the water is stored. Irrigation water skips this step.'},
+  {n:'8', c:'fresh', name:'Drinking-water tank and tap', at:[12.3,2.4,-3.6],
+   text:`A closed, food-safe tank. About ${D.drink} L a day: drinking water for a family of four. Target: under 600 mg/L of dissolved salts (WHO taste guidance) and germ-free.`},
+  {n:'9', c:'crop', name:'Irrigation tank', at:[8.4,1.8,2.3],
+   text:`About ${D.product - D.drink} L a day for watering plants, drawn off at the tap. No disinfection needed. Target: under 450 mg/L of salts and under 0.7 mg/L of boron (FAO), with calcium and magnesium present. Enough for a small vegetable bed, not a field.`},
+];
+
+// ---- Scene ----
+const stage = $('#stage');
+let renderer;
+try { renderer = new THREE.WebGLRenderer({antialias:true, preserveDrawingBuffer:true}); }
+catch (e) { $('#err').hidden = false; throw e; }
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+stage.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#cfe9f3');
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 300);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI / 2 - 0.04;
+controls.minDistance = 4; controls.maxDistance = 130;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xb8a37a, 1.1));
+const sunLight = new THREE.DirectionalLight(0xffffff, 1.7);
+sunLight.position.set(-8, 16, 8); sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(2048, 2048);
+Object.assign(sunLight.shadow.camera, {left:-24, right:24, top:16, bottom:-16, far:60});
+scene.add(sunLight);
+
+const box = (w,h,d) => new THREE.BoxGeometry(w,h,d);
+const cyl = (r,h) => new THREE.CylinderGeometry(r,r,h,28);
+function mesh(geo, color, pos, rot, mat = {}) {
+  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({color, roughness:.7, ...mat}));
+  m.position.set(...pos); if (rot) m.rotation.set(...rot);
+  m.castShadow = m.receiveShadow = !mat.transparent;
+  scene.add(m); return m;
+}
+const H = Math.PI / 2;
+const SEA = '#0e6a85', FRESH = '#2aa9e0', BRINE = '#c2572b', POWER = '#f2b705';
+const STEEL = '#aeb9bf', SLATE = '#3d4a52';
+
+// Base
+mesh(box(26,1,14), '#e2c88e', [1.5,-.5,0]);
+mesh(new THREE.SphereGeometry(1.3, 24, 16), '#ffd84a', [-10,12,-12], null, {emissive:'#ffb400', emissiveIntensity:.9});
+
+// A  Solar panels
+for (const x of [-3.2, -0.8]) {
+  mesh(box(2.2,.08,1.4), '#17356e', [x,1.35,-5.5], [.55,0,0], {roughness:.25, metalness:.3});
+  mesh(box(2.3,.05,1.5), STEEL, [x,1.31,-5.52], [.55,0,0]);
+  mesh(cyl(.06,1.3), SLATE, [x,.65,-5.6]);
+}
+// B  Battery + controller
+mesh(box(1.3,.8,.7), SLATE, [1.5,.4,-5.2]);
+mesh(box(.5,.3,.5), POWER, [1.5,.95,-5.2]);
+// 1  Beaker of salt water (stands in for the sea) with a strainer on the suction pipe
+const GLASS = {transparent:true, opacity:.3, roughness:.1, side:THREE.DoubleSide, depthWrite:false};
+mesh(cyl(.94,1.3), '#2a8fb0', [-8.5,.66,-2], null, {roughness:.2});
+mesh(new THREE.CylinderGeometry(1,1,1.9,28,1,true), '#dff3fa', [-8.5,.95,-2], null, GLASS);
+mesh(cyl(.17,.3), STEEL, [-8.5,1.45,-2], null, {metalness:.5});
+// 5  Brine container, kept apart from the feed beaker
+mesh(cyl(.94,.9), BRINE, [4.5,.46,4.5]);
+mesh(new THREE.CylinderGeometry(1,1,1.7,28,1,true), '#f3ddd2', [4.5,.85,4.5], null, GLASS);
+// 2  Pre-filters
+for (const x of [-5.5, -4.3]) {
+  mesh(cyl(.4,1.4), '#3f8fb5', [x,.75,-2], null, {transparent:true, opacity:.75});
+  mesh(cyl(.25,1.2), x < -5 ? '#d9cfa8' : '#f4f1e6', [x,.75,-2]);
+  mesh(cyl(.45,.22), SLATE, [x,1.55,-2]);
+}
+// 3  High-pressure pump (motor + pump head)
+mesh(cyl(.38,.9), POWER, [-1.9,.5,-2], [0,0,H]);
+mesh(box(.6,.75,.75), SLATE, [-1.15,.5,-2]);
+// 4  RO membrane vessel on two saddles
+mesh(cyl(.45,4), '#f2f5f6', [3,1,-2], [0,0,H]);
+for (const x of [1,5]) mesh(cyl(.5,.25), '#1479ad', [x,1,-2], [0,0,H]);
+for (const x of [2,4]) mesh(box(.3,.6,.8), SLATE, [x,.3,-2]);
+// 6  Mineral filter
+mesh(cyl(.45,1.7), '#f2f5f6', [7,.85,-2]);
+mesh(cyl(.47,.35), '#7ec8b5', [7,.85,-2]);
+mesh(cyl(.3,.15), SLATE, [7,1.78,-2]);
+// 7  UV lamp
+mesh(cyl(.2,1.6), STEEL, [10,1,-3.6], [0,0,H], {metalness:.7, roughness:.3});
+mesh(box(.4,.25,.3), '#7b5cd6', [10,1.3,-3.6]);
+// 8  Drinking tank + tap + cup
+mesh(cyl(.9,2), '#1e88c8', [12.3,1,-3.6]);
+mesh(cyl(.93,.12), '#135f8f', [12.3,2.05,-3.6]);
+mesh(box(.14,.14,.5), STEEL, [12.3,.75,-2.55]);
+mesh(cyl(.16,.3), '#ffffff', [12.3,.15,-2.3]);
+// 9  Irrigation tank
+mesh(cyl(.8,1.4), '#4c9a2a', [8.4,.7,2.3]);
+mesh(box(.5,.14,.14), STEEL, [9.4,.4,2.3]);   // outlet tap
+
+// ---- Pipes and cables: a tube plus beads that travel along it ----
+const FLOWS = [
+  {c:SEA,   n:16, p:[[-8.5,1.4,-2],[-8.5,2.3,-2],[-7.1,2.3,-2],[-7.1,.5,-2],[-0.6,.5,-2],[.2,1,-2],[1,1,-2]]},
+  {c:FRESH, n:5,  p:[[5,1,-2],[8.4,1,-2]]},
+  {c:FRESH, n:5,  p:[[8.4,1,-2],[8.4,1,-3.6],[11.5,1,-3.6]]},
+  {c:FRESH, n:5,  p:[[8.4,1,-2],[8.4,1.7,-1.4],[8.4,1.7,2.3],[8.4,1.4,2.3]]},
+  {c:BRINE, n:8,  p:[[4.5,.6,-2],[4.5,.3,-1.4],[4.5,.3,3.6]]},
+  {c:POWER, n:4,  thin:1, p:[[-2,.7,-5.6],[-2,.08,-5.2],[.85,.08,-5.2]]},
+  {c:POWER, n:5,  thin:1, p:[[1.5,.08,-4.8],[1.5,.08,-3.6],[-1.9,.08,-3.6],[-1.9,.2,-2.4]]},
+  {c:POWER, n:8,  thin:1, p:[[2.2,.08,-5.2],[10,.08,-5.2],[10,.9,-3.8]]},
+];
+const beads = [];
+for (const f of FLOWS) {
+  // tension near 0 keeps the corners square, like real pipework
+  const curve = new THREE.CatmullRomCurve3(f.p.map(p => new THREE.Vector3(...p)), false, 'catmullrom', 0.02);
+  const r = f.thin ? .035 : .09;
+  mesh(new THREE.TubeGeometry(curve, 200, r, 10), f.c, [0,0,0]);
+  for (let i = 0; i < f.n; i++) {
+    const b = mesh(new THREE.SphereGeometry(r * 1.6, 12, 8), f.c, [0,0,0], null, {emissive:f.c, emissiveIntensity:.6});
+    b.castShadow = false;
+    beads.push({b, curve, off:i / f.n, speed:(f.thin ? 9 : 3.5) / curve.getLength()});
+  }
+}
+
+// ---- Labels, list and selection ----
+let sel = -1, goal = null;
+const tags = PARTS.map((p, i) => {
+  p.v = new THREE.Vector3(...p.at);
+  const li = document.createElement('li');
+  li.innerHTML = `<button><span class="b ${p.c}">${p.n}</span>${p.name}</button>`;
+  li.firstChild.onclick = () => select(i);
+  $('#parts').append(li);
+  const t = document.createElement('button');
+  t.className = 'tag';
+  t.innerHTML = `<span class="b ${p.c}">${p.n}</span><i>${p.name}</i>`;
+  t.title = p.name;
+  t.onclick = () => select(i);
+  stage.append(t);
+  return t;
+});
+const HOME = {t:[1.5,0,-.3], p:[1.5,13,23.5]};
+// pull the whole-plant view back on narrow screens so the plant still fits
+function fly(v) {
+  const t = new THREE.Vector3(...v.t), p = new THREE.Vector3(...v.p);
+  if (v === HOME) p.sub(t).multiplyScalar(Math.max(1, 1.65 / camera.aspect)).add(t);
+  goal = {t, p};
+}
+function select(i) {
+  sel = i;
+  const p = PARTS[i];
+  document.querySelectorAll('#parts button').forEach((b, j) => b.setAttribute('aria-current', j === i));
+  tags.forEach((t, j) => t.setAttribute('aria-current', j === i));
+  $('#info').innerHTML = p
+    ? `<h2>${p.n}. ${p.name}</h2><p>${p.text}</p>`
+    : '<h2>How it works</h2><p>Sunlight drives a pump that pushes salt water through a membrane. Fresh water passes; salt stays behind and is collected as brine. Minerals are added, then the water splits into a drinking line and an irrigation line.</p>';
+  fly(p ? {t:[p.at[0], .6, p.at[2]], p:[p.at[0] + 1.5, 6.5, p.at[2] + 10]} : HOME);
+}
+controls.addEventListener('start', () => goal = null);   // the user's drag wins over the fly-to
+const step = d => select((sel + d + PARTS.length) % PARTS.length);
+$('#next').onclick = () => step(1);
+$('#prev').onclick = () => step(sel < 0 ? 0 : -1);
+$('#reset').onclick = () => select(-1);
+$('#labels').onclick = e => e.target.textContent = stage.classList.toggle('nolabels') ? 'Show labels' : 'Hide labels';
+let running = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+const pauseBtn = $('#pause');
+const showRun = () => pauseBtn.textContent = running ? 'Pause flow' : 'Play flow';
+pauseBtn.onclick = () => { running = !running; showRun(); };
+showRun();
+
+// ?shot=name gives a clean fixed view (used for the slide images)
+const SHOTS = {
+  overview:{t:[1.5,.2,0], p:[1.5,11,20.5]},
+  intake:{t:[-6,.8,-2.4], p:[-6.6,4.6,6.6], only:'1 2'},
+  power:{t:[-.8,.6,-3.8], p:[-.5,6,6.5], only:'A B 3'},
+  ro:{t:[2.5,.5,1], p:[2.5,8,12.5], only:'3 4 5'},
+  outputs:{t:[9.6,.6,-.8], p:[9.8,7.5,9], only:'6 7 8 9'},
+  plain:{t:[-.8,.6,-3.8], p:[-.5,6,6.5], only:''},
+};
+const shot = SHOTS[new URLSearchParams(location.search).get('shot')];
+if (shot) {
+  document.body.classList.add('shot'); running = false;
+  if (shot.only != null) tags.forEach((t, i) => t.hidden = !shot.only.split(' ').includes(PARTS[i].n));
+}
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+  stage.classList.toggle('compact', w < 1000);   // numbers only when names would collide
+}
+addEventListener('resize', resize); resize();
+select(-1);
+fly(shot || HOME);
+camera.position.copy(goal.p); controls.target.copy(goal.t); goal = null;
+
+const clock = new THREE.Clock(), v = new THREE.Vector3();
+let time = 0;
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), .1);
+  if (running) time += dt;
+  for (const o of beads) o.curve.getPointAt((o.off + time * o.speed) % 1, o.b.position);
+  if (goal) {
+    camera.position.lerp(goal.p, .08); controls.target.lerp(goal.t, .08);
+    if (camera.position.distanceTo(goal.p) < .05) goal = null;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  const w = stage.clientWidth, h = stage.clientHeight;
+  // Place labels lowest first; one that would cover another slides up and keeps a leader line.
+  const placed = [];
+  PARTS.map((p, i) => (v.copy(p.v).project(camera), {i, x:(v.x + 1) / 2 * w, y:(1 - v.y) / 2 * h, z:v.z}))
+    .sort((a, b) => b.y - a.y).forEach(o => {
+      const t = tags[o.i]; if (t.hidden) return;
+      const tw = t.offsetWidth / 2 + 3, th = t.offsetHeight + 4;
+      let y = o.y;
+      while (placed.some(q => Math.abs(q.x - o.x) < q.w + tw && y - th < q.y && q.y - q.h < y)) y -= 4;
+      placed.push({x:o.x, y, w:tw, h:th});
+      t.style.visibility = o.z < 1 ? '' : 'hidden';
+      t.style.left = o.x + 'px'; t.style.top = y + 'px';
+      t.style.setProperty('--lead', o.y - y + 'px');
+    });
+});
+</script>
+</body>
+</html>
